@@ -11,21 +11,21 @@ app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
 
-// --- MySQL Connection Pool (Aiven Compatible) ---
-// --- MySQL Connection Pool (Secure Version) ---
+// --- MySQL Connection Pool (Vercel & Aiven Optimized) ---
 const db = mysql.createPool({
-  host: process.env.DB_HOST || "mysql-463bd85-mrtanzeellkjh-6364.h.aivencloud.com",
-  user: process.env.DB_USER || "avnadmin",
-  password: process.env.DB_PASSWORD, // Yahan se password hata diya hai
-  database: process.env.DB_NAME || "defaultdb",
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
   port: process.env.DB_PORT || 10909,
   ssl: {
-    rejectUnauthorized: false,
+    rejectUnauthorized: false, // Vercel ke liye ye nihayat zaroori hai
   },
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
 });
+
 // --- Middleware: Token Authentication ---
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers["authorization"];
@@ -47,6 +47,24 @@ const isAdmin = (req, res, next) => {
   }
   next();
 };
+
+// --- Health Check (Sab se pehle check karne ke liye) ---
+app.get("/health", async (req, res) => {
+  try {
+    const [rows] = await db.execute("SELECT 1");
+    res.json({ 
+      status: "OK", 
+      database: "Connected", 
+      message: "Ustad! Backend is live and kicking!" 
+    });
+  } catch (err) {
+    res.status(500).json({ 
+      status: "Error", 
+      message: "Database connection failed", 
+      error: err.message 
+    });
+  }
+});
 
 // --- 1. AUTHENTICATION ---
 app.post("/register", async (req, res) => {
@@ -245,15 +263,5 @@ app.post("/admin/toggle-user-status", authenticateToken, isAdmin, async (req, re
   }
 });
 
-// Test Database Connection Route
-app.get("/health", async (req, res) => {
-  try {
-    await db.execute("SELECT 1");
-    res.json({ status: "OK", database: "Connected" });
-  } catch (err) {
-    res.status(500).json({ status: "Error", message: err.message });
-  }
-});
-
-// Important for Render Deployment
+// Vercel export (Serverless function ke liye)
 module.exports = app;

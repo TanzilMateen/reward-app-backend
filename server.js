@@ -11,16 +11,14 @@ app.use(express.json());
 
 const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
 
-// --- MySQL Connection Pool (Vercel & Aiven Optimized) ---
+// --- MySQL Connection Pool (Testing with Hardcoded Values) ---
 const db = mysql.createPool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
+  password: process.env.DB_PASSWORD, // Ab ye Vercel ki settings se naya password uthayega
   database: process.env.DB_NAME,
   port: process.env.DB_PORT || 10909,
-  ssl: {
-    rejectUnauthorized: false, // Vercel ke liye ye nihayat zaroori hai
-  },
+  ssl: { rejectUnauthorized: false },
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
@@ -265,3 +263,4 @@ app.post("/admin/toggle-user-status", authenticateToken, isAdmin, async (req, re
 
 // Vercel export (Serverless function ke liye)
 module.exports = app;
+

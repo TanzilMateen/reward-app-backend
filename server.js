@@ -1,266 +1,236 @@
-const express = require("express");
-const cors = require("cors");
-const mysql = require("mysql2/promise");
-const bcrypt = require("bcrypt");
-const jwt = require("jsonwebtoken");
-require("dotenv").config();
+import { useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
+import { Button } from '../components/ui/button';
+import { Badge } from '../components/ui/badge';
+import { Input } from '../components/ui/input';
+import { 
+  Clock, RefreshCw, User, Users, Shield, Edit2, Ban, Unlock, 
+  ArrowLeftRight, Wallet, Activity, Link2, TrendingUp, Search,
+  AlertTriangle, CheckCircle, Trash2
+} from 'lucide-react';
 
-const app = express();
-app.use(cors());
-app.use(express.json());
+const API_BASE_URL = "https://reward-app-backend-seven.vercel.app";
 
-const JWT_SECRET = process.env.JWT_SECRET || "your_jwt_secret_key";
+interface WithdrawalRequest {
+  id: number; name: string; email: string; amount: number;
+  method: string; account_details: string; status: string; created_at: string;
+}
 
-// --- MySQL Connection Pool (Testing with Hardcoded Values) ---
-const db = mysql.createPool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD, // Ab ye Vercel ki settings se naya password uthayega
-  database: process.env.DB_NAME,
-  port: process.env.DB_PORT || 10909,
-  ssl: { rejectUnauthorized: false },
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-});
+interface UserData {
+  id: number; name: string; email: string; balance: number;
+  role: string; is_active?: number; total_watched?: number;
+}
 
-// --- Middleware: Token Authentication ---
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers["authorization"];
-  const token = authHeader && authHeader.split(" ")[1];
+export function AdminDashboard() {
+  const [requests, setRequests] = useState<WithdrawalRequest[]>([]);
+  const [users, setUsers] = useState<UserData[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [activeTab, setActiveTab] = useState<'withdrawals' | 'users' | 'tasks'>('withdrawals');
 
-  if (!token) return res.status(401).json({ message: "No Token Provided" });
+  const fetchData = async () => {
+    setLoading(true);
+    const token = localStorage.getItem("token");
+    if (!token) return;
 
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ message: "Session Expired" });
-    req.user = user;
-    next();
-  });
-};
-
-// --- Middleware: Admin Check ---
-const isAdmin = (req, res, next) => {
-  if (!req.user || req.user.role !== "admin") {
-    return res.status(403).json({ message: "Access Denied: Admin Only" });
-  }
-  next();
-};
-
-// --- Health Check (Sab se pehle check karne ke liye) ---
-app.get("/health", async (req, res) => {
-  try {
-    const [rows] = await db.execute("SELECT 1");
-    res.json({ 
-      status: "OK", 
-      database: "Connected", 
-      message: "Ustad! Backend is live and kicking!" 
-    });
-  } catch (err) {
-    res.status(500).json({ 
-      status: "Error", 
-      message: "Database connection failed", 
-      error: err.message 
-    });
-  }
-});
-
-// --- 1. AUTHENTICATION ---
-app.post("/register", async (req, res) => {
-  const { name, email, password, referred_by } = req.body;
-  const myReferralCode = "REF" + Math.floor(100000 + Math.random() * 900000);
-
-  let connection;
-  try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
-
-    const [existing] = await connection.execute("SELECT id FROM users WHERE email = ?", [email]);
-    if (existing.length > 0) {
-      await connection.rollback();
-      return res.status(400).json({ message: "Email already registered!" });
+    try {
+      const [resW, resU] = await Promise.all([
+        fetch(`${API_BASE_URL}/admin/withdrawals`, { headers: { "Authorization": `Bearer ${token}` } }),
+        fetch(`${API_BASE_URL}/admin/users`, { headers: { "Authorization": `Bearer ${token}` } })
+      ]);
+      
+      if (resW.ok) setRequests(await resW.json());
+      if (resU.ok) setUsers(await resU.json());
+    } catch (error) {
+      console.error("Fetch Error:", error);
+    } finally {
+      setLoading(false);
     }
+  };
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const finalReferrer = referred_by && referred_by.trim() !== "" && referred_by !== "undefined" ? referred_by : null;
+  useEffect(() => { fetchData(); }, []);
 
-    await connection.execute(
-      "INSERT INTO users (name, email, password, referral_code, referred_by, balance, video_points, referral_points, role, is_active) VALUES (?, ?, ?, ?, ?, 0.00, 0, 0, 'user', 1)",
-      [name, email, hashedPassword, myReferralCode, finalReferrer]
-    );
+  // --- ACTIONS ---
+  const handleWithdrawal = async (id: number, status: 'Completed' | 'Rejected') => {
+    const reason = status === 'Rejected' ? prompt("Reason for rejection?") : "Approved by Admin";
+    if (status === 'Rejected' && !reason) return;
 
-    if (finalReferrer) {
-      const [refCheck] = await connection.execute("SELECT id FROM users WHERE referral_code = ?", [finalReferrer]);
-      if (refCheck.length > 0) {
-        await connection.execute(
-          "UPDATE users SET referral_points = referral_points + 100, balance = balance + 1.00 WHERE referral_code = ?",
-          [finalReferrer]
-        );
-      }
-    }
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/update-withdrawal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${localStorage.getItem("token")}` },
+        body: JSON.stringify({ id, status, admin_note: reason })
+      });
+      if (res.ok) fetchData();
+    } catch (err) { alert("Action failed"); }
+  };
 
-    await connection.commit();
-    res.status(201).json({ message: "Registration Successful!", referralCode: myReferralCode });
-  } catch (error) {
-    if (connection) await connection.rollback();
-    console.error(error);
-    res.status(500).json({ message: "Signup failed" });
-  } finally {
-    if (connection) connection.release();
-  }
-});
+  const toggleUserStatus = async (id: number, currentStatus: number) => {
+    const action = currentStatus === 1 ? 'BLOCK' : 'ACTIVATE';
+    if (!window.confirm(`SECURITY ALERT: Are you sure you want to ${action} this user?`)) return;
 
-app.post("/login", async (req, res) => {
-  const { email, password } = req.body;
-  try {
-    const [users] = await db.execute("SELECT * FROM users WHERE email = ?", [email]);
-    if (users.length === 0) return res.status(400).json({ message: "User not found" });
+    try {
+      const res = await fetch(`${API_BASE_URL}/admin/toggle-user-status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${localStorage.getItem("token")}` },
+        body: JSON.stringify({ id, is_active: currentStatus === 1 ? 0 : 1 })
+      });
+      if (res.ok) fetchData();
+    } catch (err) { alert("Status update failed"); }
+  };
 
-    const user = users[0];
-    if (user.is_active === 0) return res.status(403).json({ message: "Your account is suspended by admin." });
+  const filteredUsers = users.filter(u => u.email.toLowerCase().includes(searchTerm.toLowerCase()) || u.name.toLowerCase().includes(searchTerm.toLowerCase()));
 
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ message: "Invalid Password" });
+  return (
+    <div className="p-4 md:p-10 max-w-7xl mx-auto bg-[#f1f5f9] min-h-screen font-sans">
+      
+      {/* 📊 ANALYTICS OVERVIEW */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <Card className="bg-white border-none shadow-sm rounded-3xl p-6">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-[10px] font-black uppercase text-slate-400">Total Users</p>
+              <h3 className="text-3xl font-black text-slate-900">{users.length}</h3>
+            </div>
+            <div className="p-3 bg-blue-50 rounded-2xl text-blue-600"><Users size={20}/></div>
+          </div>
+        </Card>
+        <Card className="bg-white border-none shadow-sm rounded-3xl p-6">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-[10px] font-black uppercase text-slate-400">Pending Payouts</p>
+              <h3 className="text-3xl font-black text-orange-500">{requests.filter(r => r.status === 'Pending').length}</h3>
+            </div>
+            <div className="p-3 bg-orange-50 rounded-2xl text-orange-600"><Wallet size={20}/></div>
+          </div>
+        </Card>
+        <Card className="bg-white border-none shadow-sm rounded-3xl p-6">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-[10px] font-black uppercase text-slate-400">Total Payouts</p>
+              <h3 className="text-3xl font-black text-emerald-600">Rs. {requests.filter(r => r.status === 'Completed').reduce((acc, curr) => acc + curr.amount, 0)}</h3>
+            </div>
+            <div className="p-3 bg-emerald-50 rounded-2xl text-emerald-600"><CheckCircle size={20}/></div>
+          </div>
+        </Card>
+        <Card className="bg-slate-900 border-none shadow-sm rounded-3xl p-6 text-white">
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-[10px] font-black uppercase text-slate-400">System Status</p>
+              <h3 className="text-lg font-black text-blue-400 flex items-center gap-2 mt-2">
+                <Activity size={18} className="animate-pulse"/> SECURE
+              </h3>
+            </div>
+            <Shield size={24} className="text-slate-700"/>
+          </div>
+        </Card>
+      </div>
 
-    const token = jwt.sign({ id: user.id, role: user.role, name: user.name }, JWT_SECRET, { expiresIn: "7d" });
+      {/* 🕹️ CONTROLS */}
+      <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
+        <div className="flex gap-2 bg-white p-1.5 rounded-[1.5rem] shadow-sm border w-full md:w-auto">
+          <Button onClick={() => setActiveTab('withdrawals')} variant={activeTab === 'withdrawals' ? 'default' : 'ghost'} className="rounded-xl font-black flex-1 md:flex-none">Payouts</Button>
+          <Button onClick={() => setActiveTab('users')} variant={activeTab === 'users' ? 'default' : 'ghost'} className="rounded-xl font-black flex-1 md:flex-none">Users</Button>
+          <Button onClick={() => setActiveTab('tasks')} variant={activeTab === 'tasks' ? 'default' : 'ghost'} className="rounded-xl font-black flex-1 md:flex-none">Ads & Tasks</Button>
+        </div>
 
-    res.json({ token, user: { name: user.name, role: user.role, id: user.id } });
-  } catch (error) {
-    res.status(500).json({ message: "Login error" });
-  }
-});
+        <div className="relative w-full md:w-72">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+          <Input 
+            placeholder="Search email or name..." 
+            className="pl-12 rounded-2xl border-none shadow-sm h-12"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+      </div>
 
-// --- 2. USER STATS ---
-app.get("/user-stats", authenticateToken, async (req, res) => {
-  try {
-    const [rows] = await db.execute(
-      `SELECT name, video_points, referral_points, balance, referral_code, is_active,
-      (SELECT COUNT(*) FROM users WHERE referred_by = u.referral_code) as total_referrals
-      FROM users u WHERE id = ?`,
-      [req.user.id]
-    );
+      <Card className="border-none shadow-xl rounded-[2.5rem] overflow-hidden bg-white">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="bg-slate-900">
+                <th className="p-6 text-[10px] font-black uppercase text-slate-400 tracking-widest">User Details</th>
+                <th className="p-6 text-[10px] font-black uppercase text-slate-400 tracking-widest">Financial Data</th>
+                <th className="p-6 text-[10px] font-black uppercase text-slate-400 tracking-widest text-center">Security Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {activeTab === 'withdrawals' && requests.map((req) => (
+                <tr key={req.id} className="hover:bg-slate-50 transition-colors">
+                  <td className="p-6">
+                    <p className="font-black text-slate-800">{req.name}</p>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase">{req.email}</p>
+                    <Badge className="mt-2 bg-blue-50 text-blue-600 border-none text-[8px]">{req.created_at}</Badge>
+                  </td>
+                  <td className="p-6">
+                    <p className="font-black text-slate-900 text-lg">Rs. {req.amount}</p>
+                    <p className="text-[10px] font-bold text-blue-600 uppercase">{req.method} → {req.account_details}</p>
+                  </td>
+                  <td className="p-6 text-center">
+                    {req.status === 'Pending' ? (
+                      <div className="flex gap-2 justify-center">
+                        <Button onClick={() => handleWithdrawal(req.id, 'Completed')} size="sm" className="bg-emerald-500 hover:bg-emerald-600 rounded-xl font-black">APPROVE</Button>
+                        <Button onClick={() => handleWithdrawal(req.id, 'Rejected')} size="sm" variant="destructive" className="rounded-xl font-black">REJECT</Button>
+                      </div>
+                    ) : (
+                      <Badge className={req.status === 'Completed' ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}>{req.status.toUpperCase()}</Badge>
+                    )}
+                  </td>
+                </tr>
+              ))}
 
-    if (rows.length === 0) return res.status(404).json({ message: "User not found" });
-    if (rows[0].is_active === 0) return res.status(403).json({ message: "Blocked" });
-
-    res.json({
-      name: rows[0].name,
-      videoPoints: Number(rows[0].video_points),
-      referralPoints: Number(rows[0].referral_points),
-      balance: parseFloat(rows[0].balance),
-      referrals: Number(rows[0].total_referrals),
-      referralCode: rows[0].referral_code,
-    });
-  } catch (error) {
-    res.status(500).json({ message: "Fetch stats error" });
-  }
-});
-
-// --- 3. POINTS & WITHDRAWAL ---
-app.post("/add-video-points", authenticateToken, async (req, res) => {
-  try {
-    const [user] = await db.execute("SELECT is_active FROM users WHERE id = ?", [req.user.id]);
-    if (user[0].is_active === 0) return res.status(403).json({ message: "Account Blocked" });
-
-    await db.execute("UPDATE users SET video_points = video_points + 50, balance = balance + 0.50 WHERE id = ?", [
-      req.user.id,
-    ]);
-    res.json({ success: true, message: "Reward Added to Balance!" });
-  } catch (error) {
-    res.status(500).json({ message: "Points update failed" });
-  }
-});
-
-app.post("/withdraw", authenticateToken, async (req, res) => {
-  const { amount, method, accountDetails } = req.body;
-  let connection;
-  try {
-    connection = await db.getConnection();
-    await connection.beginTransaction();
-
-    const [user] = await connection.execute("SELECT balance, is_active FROM users WHERE id = ? FOR UPDATE", [
-      req.user.id,
-    ]);
-
-    if (user[0].is_active === 0) {
-      await connection.rollback();
-      return res.status(403).json({ message: "Account Blocked" });
-    }
-
-    if (parseFloat(user[0].balance) < parseFloat(amount)) {
-      await connection.rollback();
-      return res.status(400).json({ message: "Insufficient balance" });
-    }
-
-    await connection.execute("UPDATE users SET balance = balance - ? WHERE id = ?", [amount, req.user.id]);
-    await connection.execute(
-      "INSERT INTO withdrawals (user_id, amount, method, account_details, status) VALUES (?, ?, ?, ?, 'Pending')",
-      [req.user.id, amount, method, accountDetails]
-    );
-
-    await connection.commit();
-    res.json({ message: "Withdrawal request submitted successfully!" });
-  } catch (error) {
-    if (connection) await connection.rollback();
-    res.status(500).json({ message: "Withdrawal failed" });
-  } finally {
-    if (connection) connection.release();
-  }
-});
-
-// --- 4. ADMIN ROUTES ---
-app.get("/admin/withdrawals", authenticateToken, isAdmin, async (req, res) => {
-  try {
-    const [rows] = await db.execute(`
-      SELECT w.*, u.name, u.email 
-      FROM withdrawals w 
-      JOIN users u ON w.user_id = u.id 
-      ORDER BY w.id DESC
-    `);
-    res.json(rows);
-  } catch (error) {
-    res.status(500).json({ message: "Admin fetch failed" });
-  }
-});
-
-app.post("/admin/update-withdrawal", authenticateToken, isAdmin, async (req, res) => {
-  const { id, status } = req.body;
-  try {
-    await db.execute("UPDATE withdrawals SET status = ? WHERE id = ?", [status, id]);
-    res.json({ success: true, message: "Withdrawal status updated" });
-  } catch (error) {
-    res.status(500).json({ message: "Update failed" });
-  }
-});
-
-app.get("/admin/users", authenticateToken, isAdmin, async (req, res) => {
-  try {
-    const [rows] = await db.execute("SELECT id, name, email, balance, role, is_active FROM users ORDER BY id DESC");
-    res.json(rows);
-  } catch (error) {
-    res.status(500).json({ message: "User list failed" });
-  }
-});
-
-app.post("/admin/update-user-balance", authenticateToken, isAdmin, async (req, res) => {
-  const { id, balance } = req.body;
-  try {
-    await db.execute("UPDATE users SET balance = ? WHERE id = ?", [balance, id]);
-    res.json({ success: true, message: "Balance updated by Admin" });
-  } catch (error) {
-    res.status(500).json({ message: "Balance update failed" });
-  }
-});
-
-app.post("/admin/toggle-user-status", authenticateToken, isAdmin, async (req, res) => {
-  const { id, is_active } = req.body;
-  try {
-    await db.execute("UPDATE users SET is_active = ? WHERE id = ?", [is_active, id]);
-    res.json({ success: true, message: is_active ? "User Unblocked" : "User Blocked" });
-  } catch (error) {
-    res.status(500).json({ message: "Status toggle failed" });
-  }
-});
-
-// Vercel export (Serverless function ke liye)
-module.exports = app;
-
+              {activeTab === 'users' && filteredUsers.map((user) => (
+                <tr key={user.id} className="hover:bg-slate-50 transition-colors">
+                  <td className="p-6">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center font-black text-slate-400 uppercase">{user.name[0]}</div>
+                      <div>
+                        <p className="font-black text-slate-800">{user.name}</p>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase">{user.email}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="p-6">
+                    <div className="flex items-center gap-2">
+                      <p className="font-black text-emerald-600 text-lg">Rs. {user.balance}</p>
+                      {user.balance > 2000 && <AlertTriangle className="text-red-500 animate-pulse" size={16} title="High Balance Risk" />}
+                    </div>
+                    <p className="text-[9px] font-black text-slate-400 uppercase">Role: {user.role}</p>
+                  </td>
+                  <td className="p-6 text-center">
+                    <div className="flex gap-2 justify-center">
+                      <Button onClick={() => toggleUserStatus(user.id, user.is_active ?? 1)} variant={user.is_active === 0 ? "default" : "destructive"} size="sm" className="rounded-xl font-black text-[10px]">
+                        {user.is_active === 0 ? <Unlock size={14} className="mr-1"/> : <Ban size={14} className="mr-1"/>}
+                        {user.is_active === 0 ? "UNBLOCK" : "BLOCK USER"}
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              
+              {activeTab === 'tasks' && (
+                <tr>
+                  <td colSpan={3} className="p-20 text-center">
+                    <div className="max-w-md mx-auto space-y-4">
+                       <Link2 className="mx-auto text-blue-500" size={48} />
+                       <h3 className="font-black text-xl italic uppercase">Task & Link Manager</h3>
+                       <p className="text-sm text-slate-500 font-bold">Yahan se aap apne Monetag aur GPLinks ke URL live update kar sakte hain taake code change na karna paray.</p>
+                       <Button className="bg-slate-900 rounded-2xl h-12 px-8 font-black">ADD NEW AD LINK</Button>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          {loading && (
+            <div className="p-20 flex flex-col items-center gap-4">
+              <RefreshCw className="animate-spin text-blue-600" size={40} />
+              <p className="font-black text-slate-400 uppercase tracking-widest animate-pulse text-xs">Synchronizing Database...</p>
+            </div>
+          )}
+        </div>
+      </Card>
+    </div>
+  );
+}

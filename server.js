@@ -6,6 +6,9 @@ const jwt = require("jsonwebtoken");
 require("dotenv").config();
 
 const app = express();
+app.get("/", (req, res) => {
+  res.send("Backend is Running Successfully!");
+});
 app.use(cors());
 app.use(express.json());
 
@@ -189,3 +192,4 @@ app.get("/user-stats", authenticateToken, async (req, res) => {
 });
 
 app.listen(5000, () => console.log("Server Securely Running..."));
+

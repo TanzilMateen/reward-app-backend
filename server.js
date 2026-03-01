@@ -6,9 +6,6 @@ const jwt = require("jsonwebtoken");
 require("dotenv").config();
 
 const app = express();
-app.get("/", (req, res) => {
-  res.send("Backend is Running Successfully!");
-});
 app.use(cors());
 app.use(express.json());
 
@@ -58,7 +55,6 @@ app.post("/register", async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 12);
     
-    // 🔥 UPGRADE: Referral par foran paisay nahi milenge (Anti-Fraud)
     await db.execute(
       "INSERT INTO users (name, email, password, referral_code, referred_by, balance, video_points, role, is_active) VALUES (?, ?, ?, ?, ?, 0.00, 0, 'user', 1)",
       [name, email, hashedPassword, myReferralCode, referred_by || null]
@@ -90,14 +86,12 @@ app.post("/login", async (req, res) => {
 });
 
 // --- 2. USER ACTIONS & REWARDS ---
-
 const lastClaim = new Map();
 
 app.post("/add-video-points", authenticateToken, async (req, res) => {
   const userId = req.user.id;
   const now = Date.now();
 
-  // 🔥 ANTI-CHEAT: 20s gap + Fixed Points (Hacker points change nahi kar sakega)
   if (lastClaim.has(userId) && (now - lastClaim.get(userId) < 20000)) {
     return res.status(429).json({ message: "Wait for video to finish!" });
   }
@@ -107,14 +101,14 @@ app.post("/add-video-points", authenticateToken, async (req, res) => {
     if (user[0].is_active === 0) return res.status(403).json({ message: "Blocked" });
 
     const currentPoints = user[0].video_points + 1;
-    const reward = 0.50; // Per video fix price
+    const reward = 0.50; 
 
     await db.execute("UPDATE users SET video_points = ?, balance = balance + ? WHERE id = ?", [currentPoints, reward, userId]);
 
-    // 🔥 UPGRADE: Jab user 20 videos dekh le, tab uske inviter ko Rs. 5 milenge
+    // Referral Reward Logic (When user reaches 20 videos)
     if (currentPoints === 20 && user[0].referred_by) {
       await db.execute(
-        "UPDATE users SET balance = balance + 5.00, active_referrals = active_referrals + 1 WHERE referral_code = ?",
+        "UPDATE users SET balance = balance + 5.00 WHERE referral_code = ?",
         [user[0].referred_by]
       );
     }
@@ -126,7 +120,6 @@ app.post("/add-video-points", authenticateToken, async (req, res) => {
   }
 });
 
-// 🔥 WITHDRAWAL SYSTEM (Missing in your code)
 app.post("/withdraw", authenticateToken, async (req, res) => {
   const { amount, method, details } = req.body;
   const userId = req.user.id;
@@ -150,6 +143,16 @@ app.post("/withdraw", authenticateToken, async (req, res) => {
 
 // --- 3. ADMIN DASHBOARD API ---
 
+// NEW: Get all users for admin
+app.get("/admin/users", authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const [rows] = await db.execute("SELECT id, name, email, balance, role, is_active FROM users WHERE role != 'admin' ORDER BY balance DESC");
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch users" });
+  }
+});
+
 app.get("/admin/withdrawals", authenticateToken, isAdmin, async (req, res) => {
   try {
     const [rows] = await db.execute(`
@@ -166,7 +169,9 @@ app.post("/admin/update-withdrawal", authenticateToken, isAdmin, async (req, res
   try {
     if (status === 'Rejected') {
       const [w] = await db.execute("SELECT user_id, amount FROM withdrawals WHERE id = ?", [id]);
-      await db.execute("UPDATE users SET balance = balance + ? WHERE id = ?", [w[0].amount, w[0].user_id]);
+      if (w.length > 0) {
+        await db.execute("UPDATE users SET balance = balance + ? WHERE id = ?", [w[0].amount, w[0].user_id]);
+      }
     }
     await db.execute("UPDATE withdrawals SET status = ?, admin_note = ? WHERE id = ?", [status, admin_note, id]);
     res.json({ success: true });
@@ -181,6 +186,7 @@ app.post("/admin/toggle-user-status", authenticateToken, isAdmin, async (req, re
   } catch (err) { res.status(500).json({ message: "Failed" }); }
 });
 
+// --- 4. DATA & STATS ---
 app.get("/user-stats", authenticateToken, async (req, res) => {
   try {
     const [rows] = await db.execute(`
@@ -191,5 +197,6 @@ app.get("/user-stats", authenticateToken, async (req, res) => {
   } catch (err) { res.status(500).json({ message: "Error" }); }
 });
 
-app.listen(5000, () => console.log("Server Securely Running..."));
+app.get("/", (req, res) => res.send("Backend is Running Successfully!"));
 
+app.listen(5000, () => console.log("Server Securely Running on Port 5000..."));
